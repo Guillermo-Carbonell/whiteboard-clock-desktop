@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Whiteboard Clock</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: #1a1d21; color: #e6e8eb; font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  .c { text-align: center; max-width: 380px; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+  p { color: #9aa3ad; margin: 0 0 20px; }
+  button { font: inherit; font-weight: 600; color: #fff; background: #29b6f6; border: 0; border-radius: 4px; padding: 10px 22px; cursor: pointer; }
+  button:hover { background: #4fc3f7; }
+</style></head>
+<body><div class="c"><h1>No hay conexión</h1><p>Whiteboard Clock necesita internet. Revisá la conexión y tocá Reintentar.</p>
+<button onclick="location.href='https://whiteboard-clock.web.app/'">Reintentar</button></div>
+<script>addEventListener('online', () => { location.href = 'https://whiteboard-clock.web.app/'; });</script>
+</body></html>

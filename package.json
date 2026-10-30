@@ -1,0 +1,42 @@
+{
+  "name": "whiteboard-clock-desktop",
+  "productName": "Whiteboard Clock",
+  "version": "1.0.0",
+  "description": "Whiteboard Clock para Windows: la misma app web, en su propia ventana.",
+  "main": "src/main.js",
+  "author": "Whiteboard Games",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.10"
+  },
+  "devDependencies": {
+    "electron": "44.7.2",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "games.whiteboard.clock",
+    "productName": "Whiteboard Clock",
+    "artifactName": "WhiteboardClock-Setup-${version}.${ext}",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["src/**/*", "build/tray.png", "build/tray@2x.png", "build/icon.png"],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Whiteboard Clock",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [{ "provider": "github", "owner": "Guillermo-Carbonell", "repo": "whiteboard-clock-desktop", "releaseType": "release" }]
+  }
+}
