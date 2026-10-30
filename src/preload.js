@@ -12,6 +12,7 @@ if (OK.test(location.origin) || (info.dev && location.href.startsWith(info.dev))
     openExternal: url => ipcRenderer.invoke('wb:open', url),
     checkUpdate: () => ipcRenderer.invoke('wb:check'),
     restartToUpdate: () => ipcRenderer.invoke('wb:restart'),
+    googleLogin: () => ipcRenderer.invoke('wb:google'),
     onUpdateReady: cb => ipcRenderer.on('wb:update-ready', (e, v) => cb(v)),
   });
 }

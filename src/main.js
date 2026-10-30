@@ -8,6 +8,8 @@
 const { app, BrowserWindow, Tray, Menu, shell, ipcMain, powerMonitor, nativeImage, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const crypto = require('crypto');
 const { autoUpdater } = require('electron-updater');
 
 // WB_URL solo para probar la app sin instalar (npm start); la instalada siempre abre la de verdad
@@ -103,6 +105,34 @@ ipcMain.handle('wb:set', (e, k, v) => {
   saveCfg(); return true;
 });
 ipcMain.handle('wb:open', (e, url) => openOutside(String(url || '')));
+
+/* ───────── "Continuar con Google" en el navegador de la persona ─────────
+   Google se abre en su navegador (con su cuenta, autocompletar y llaves de acceso). Esa página, al terminar, vuelve a
+   http://127.0.0.1:PUERTO/cb con el inicio de sesión; la app lo recibe acá (solo desde esta misma compu) y entra. */
+let loginWait = null;
+ipcMain.handle('wb:google', () => {
+  if (loginWait) loginWait.finish(null);
+  return new Promise(resolve => {
+    const state = crypto.randomBytes(24).toString('base64url');
+    let done = false, timer = null;
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url, 'http://127.0.0.1');
+      if (u.pathname !== '/cb' || u.searchParams.get('s') !== state) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(`<!doctype html><meta charset="utf-8"><title>Whiteboard Clock</title><body style="margin:0;display:grid;place-items:center;height:100vh;background:#1a1d21;color:#e6e8eb;font:16px 'Segoe UI',system-ui,sans-serif;text-align:center"><div><h2 style="font-weight:600;margin:0 0 8px">Listo</h2><p style="color:#9aa3ad;margin:0">Ya entraste en la app de Whiteboard Clock.<br>Esta pestaña se puede cerrar.</p></div><script>history.replaceState(null,'','/');setTimeout(()=>window.close(),800)</script>`);
+      finish({ idToken: u.searchParams.get('id') || '', accessToken: u.searchParams.get('at') || '' });
+      showWin();
+    });
+    const finish = v => { if (done) return; done = true; clearTimeout(timer); try { srv.close(); } catch { /* */ } loginWait = null; resolve(v); };
+    loginWait = { finish };
+    srv.on('error', () => finish(null));
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port;
+      shell.openExternal(`${APP_URL}?desk=login&p=${port}&s=${state}`);
+      timer = setTimeout(() => finish(null), 5 * 60e3); // 5 minutos para terminar en el navegador
+    });
+  });
+});
 ipcMain.handle('wb:restart', () => { quitting = true; autoUpdater.quitAndInstall(true, true); });
 ipcMain.handle('wb:check', async () => {
   if (!app.isPackaged) return 'none';
