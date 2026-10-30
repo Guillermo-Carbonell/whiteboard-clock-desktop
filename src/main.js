@@ -49,7 +49,7 @@ function createWindow() {
 
   // links: los de la app quedan adentro; el inicio de sesión de Google abre su ventanita; todo lo demás, al navegador predeterminado
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAuth(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 680, autoHideMenuBar: true, parent: win, modal: false } };
+    if (isAuth(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 680, autoHideMenuBar: true, parent: win, modal: false, webPreferences: { preload: path.join(__dirname, 'auth-preload.js'), contextIsolation: true, sandbox: true } } };
     if (isApp(url)) { win.loadURL(url); return { action: 'deny' }; }
     openOutside(url); return { action: 'deny' };
   });
