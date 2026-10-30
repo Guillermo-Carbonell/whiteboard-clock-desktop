@@ -165,23 +165,45 @@ function paintClock() {
 }
 
 // ¿hay un juego o un video en pantalla completa? (ahí el mini reloj se esconde)
-let queryNotif = null;
+// Se mira la ventana de adelante: si ocupa toda una pantalla y no es de Windows (escritorio, barra, menú Inicio,
+// íconos ocultos…), es un juego o un video en pantalla completa. Además, los juegos en pantalla completa "exclusiva".
+let W32 = null;
 try {
-  if (process.platform === 'win32') queryNotif = require('koffi').load('shell32.dll').func('int __stdcall SHQueryUserNotificationState(_Out_ int *pquns)');
-} catch { queryNotif = null; }
+  if (process.platform === 'win32') {
+    const koffi = require('koffi'), u = koffi.load('user32.dll'), sh = koffi.load('shell32.dll');
+    const RECT = koffi.struct('WB_RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+    W32 = {
+      quns: sh.func('int __stdcall SHQueryUserNotificationState(_Out_ int *pquns)'),
+      fg: u.func('void * __stdcall GetForegroundWindow()'),
+      rect: u.func('bool __stdcall GetWindowRect(void *hWnd, _Out_ WB_RECT *lpRect)'),
+      cls: u.func('int __stdcall GetClassNameW(void *hWnd, _Out_ uint8_t *lpClassName, int nMaxCount)'),
+      RECT,
+    };
+  }
+} catch { W32 = null; }
+const SHELL = new Set(['Progman', 'WorkerW', 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'NotifyIconOverflowWindow', 'TopLevelWindowForOverflowXamlIsland',
+  'Windows.UI.Core.CoreWindow', 'XamlExplorerHostIslandWindow', 'ForegroundStaging', 'MultitaskingViewFrame', 'TaskSwitcherWnd', 'Shell_InputSwitchTopLevelWindow']);
 function fullScreenNow() {
-  if (!queryNotif) return false;
-  try { const o = [0]; return queryNotif(o) === 0 && [2, 3, 4].includes(o[0]); } catch { return false; } // 2 ocupado, 3 juego, 4 presentación
+  if (!W32) return false;
+  try {
+    const q = [0]; if (W32.quns(q) === 0 && (q[0] === 3 || q[0] === 4)) return true; // juego exclusivo o modo presentación
+    const h = W32.fg(); if (!h) return false;
+    const buf = Buffer.alloc(512), n = W32.cls(h, buf, 256), cls = buf.toString('utf16le', 0, Math.max(0, n) * 2);
+    if (SHELL.has(cls)) return false;
+    const r = {}; if (!W32.rect(h, r)) return false;
+    const d = screen.screenToDipRect(null, { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top });
+    return screen.getAllDisplays().some(x => Math.abs(d.x - x.bounds.x) <= 2 && Math.abs(d.y - x.bounds.y) <= 2 && d.width >= x.bounds.width - 2 && d.height >= x.bounds.height - 2);
+  } catch { return false; }
 }
 
 const MINI_W = 330;
-let mini = null, miniReady = false, fsBusy = false;
+let mini = null, miniReady = false, fsBusy = false, fsHits = 0;
 // el lugar de siempre: pegado sobre la barra de la pantalla principal (Windows 11: a la izquierda; Windows 10: al lado de los íconos chiquitos)
 function miniSpot() {
   const d = screen.getPrimaryDisplay(), b = d.bounds, w = d.workArea;
   const below = (b.y + b.height) - (w.y + w.height), above = w.y - b.y, th = below || above;
   if (th < 20) return null; // la barra se oculta sola o está al costado
-  const h = Math.max(22, Math.min(34, th - 8));
+  const h = Math.max(24, Math.min(36, th - 4));
   const y = below ? w.y + w.height + Math.round((below - h) / 2) : b.y + Math.round((above - h) / 2);
   const win11 = process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22000;
   const x = win11 ? b.x + 12 : b.x + b.width - MINI_W - 300;
@@ -212,7 +234,8 @@ function refreshMini() {
   const r = (cfg.mini && clock.state !== 'off' && !fsBusy && win && !quitting) ? miniRect() : null;
   if (!r) { if (mini && !mini.isDestroyed() && mini.isVisible()) mini.hide(); return; }
   if (!mini || mini.isDestroyed()) makeMini(r);
-  const b = mini.getBounds(); if (b.x !== r.x || b.y !== r.y || b.width !== r.width || b.height !== r.height) mini.setBounds(r);
+  // con la pantalla al 125 % o 150 % Windows redondea: solo se mueve si de verdad cambió (si no, parpadea)
+  const b = mini.getBounds(); if (Math.abs(b.x - r.x) > 2 || Math.abs(b.y - r.y) > 2 || Math.abs(b.width - r.width) > 2 || Math.abs(b.height - r.height) > 2) mini.setBounds(r);
   if (miniReady) mini.webContents.send('mini:state', clock);
   if (miniReady && !mini.isVisible()) mini.showInactive();
 }
@@ -221,9 +244,11 @@ ipcMain.on('mini:cmd', (e, c) => { if (!mini || e.sender !== mini.webContents ||
 ipcMain.on('mini:open', e => { if (mini && e.sender === mini.webContents) showWin(); });
 function watchMini() {
   setInterval(() => {
-    const fs1 = fullScreenNow(); if (fs1 !== fsBusy) { fsBusy = fs1; refreshMini(); }
+    // se esconde recién si la pantalla completa sigue un momento (abrir el menú o los íconos ocultos no cuenta); vuelve al toque
+    const fs1 = fullScreenNow(); fsHits = fs1 ? fsHits + 1 : 0;
+    const busy = fsHits >= 3; if (busy !== fsBusy) { fsBusy = busy; refreshMini(); }
     if (mini && !mini.isDestroyed() && mini.isVisible()) mini.moveTop(); // si tocás la barra, Windows la pone adelante: el mini reloj vuelve arriba
-  }, 1500);
+  }, 400);
   for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(ev, () => refreshMini());
 }
 

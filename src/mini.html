@@ -3,6 +3,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+  body { box-sizing: border-box; padding: 2px; } /* aire para que el borde no se corte con la pantalla al 125 % o 150 % */
   .pill { box-sizing: border-box; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 12px;
     background: #23272c; border: 1px solid #2fbf5b55; border-radius: 999px; color: #f2f2f2;
     font: 13px 'Segoe UI', system-ui, sans-serif; -webkit-app-region: drag; cursor: default; }
