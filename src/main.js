@@ -5,7 +5,7 @@
 //  · los links de afuera (Drive, Discord…) se abren en el navegador predeterminado;
 //  · arranca con Windows y queda un ícono en la barra (se prende y apaga desde Configuración);
 //  · se actualiza sola y avisa con un cartel para reiniciar.
-const { app, BrowserWindow, Tray, Menu, shell, ipcMain, powerMonitor, nativeImage, session } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, ipcMain, powerMonitor, nativeImage, session, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -75,9 +75,40 @@ function createWindow() {
   // cerrar: con el ícono en la barra, se esconde (el reloj sigue); sin él, se cierra
   const keepBounds = () => { if (!win || win.isDestroyed()) return; cfg.maximized = win.isMaximized(); if (!cfg.maximized && !win.isMinimized()) cfg.bounds = win.getBounds(); saveCfg(); };
   win.on('resize', keepBounds); win.on('move', keepBounds);
-  win.on('close', e => { keepBounds(); if (!quitting && cfg.tray && tray) { e.preventDefault(); win.hide(); } });
+  win.on('close', e => {
+    keepBounds();
+    if (quitting) return;
+    e.preventDefault();
+    if (cfg.tray && tray) win.hide(); else quitFlow();
+  });
+  // el aviso de "si cerrás se pausa" de la página no tiene que trabar la salida: de eso se encarga quitFlow
+  win.webContents.on('will-prevent-unload', e => e.preventDefault());
+  win.on('session-end', () => { quitting = true; }); // Windows se apaga: salir sin preguntar
   win.on('closed', () => { win = null; });
   win.loadURL(APP_URL);
+}
+/* ───────── salir: si el reloj está corriendo, preguntar y pausarlo antes de cerrar ───────── */
+const withTimeout = (p, ms, v) => Promise.race([p, new Promise(r => setTimeout(() => r(v), ms))]);
+const runInPage = (code, ms) => (win && !win.isDestroyed()) ? withTimeout(win.webContents.executeJavaScript(code, true).catch(() => null), ms, null) : Promise.resolve(null);
+let asking = false;
+async function quitFlow() {
+  if (quitting || asking) return;
+  asking = true;
+  try {
+    const info = await runInPage('window.__wbQuitInfo ? window.__wbQuitInfo() : null', 3000);
+    if (info && info.running) {
+      if (win.isMinimized()) win.restore();
+      win.show(); win.focus();
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'question', buttons: ['Pausar y salir', 'Cancelar'], defaultId: 0, cancelId: 1, noLink: true,
+        title: 'Whiteboard Clock', message: 'Tenés el reloj prendido',
+        detail: `${info.label || 'Sin tarea'}\n\nSi salís, el reloj queda en pausa.`,
+      });
+      if (response !== 0) return;
+      await runInPage('window.__wbPauseForQuit ? window.__wbPauseForQuit() : true', 8000);
+    }
+    quitting = true; app.quit();
+  } finally { asking = false; }
 }
 function showWin() { if (!win) return createWindow(); if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
 
@@ -91,7 +122,7 @@ function setTray(on) {
     { label: 'Abrir Whiteboard Clock', click: showWin },
     { label: 'Abrir Whiteboard Tasks', click: () => { showWin(); win.loadURL(APP_URL + 'tasks.html'); } },
     { type: 'separator' },
-    { label: 'Salir', click: () => { quitting = true; app.quit(); } },
+    { label: 'Salir', click: () => quitFlow() },
   ]));
   tray.on('click', showWin);
 }
@@ -159,5 +190,5 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   createWindow(); setTray(cfg.tray); startUpdates();
 });
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; }); // actualizar o apagar Windows: salir directo
 app.on('window-all-closed', () => { if (!cfg.tray || !tray) app.quit(); });
