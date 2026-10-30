@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>¿Seguís ahí?</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+  body { box-sizing: border-box; padding: 2px; }
+  .c { box-sizing: border-box; height: 100%; background: #23272c; border: 1px solid #f2b63299; border-radius: 10px; color: #f2f2f2;
+    font: 13px/1.4 'Segoe UI', system-ui, sans-serif; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+  .c.red { border-color: #ef535099; }
+  .h { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #f2b632; flex: none; }
+  .red .dot { background: #ef5350; }
+  .x { margin-left: auto; font-size: 11px; font-weight: 400; color: #8a929b; }
+  p { margin: 0; color: #c9ced4; }
+  .lb { color: #a7aeb6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cd { font: 700 13px Consolas, 'Cascadia Mono', monospace; color: #f2b632; }
+  .acts { display: flex; gap: 8px; margin-top: auto; }
+  button { font: 600 13px 'Segoe UI', system-ui, sans-serif; border-radius: 6px; padding: 8px 12px; cursor: pointer; border: 1px solid #3a3f46; background: #2d3238; color: #e6e8eb; }
+  button:hover { background: #363c43; }
+  button.pri { background: #29b6f6; border-color: #29b6f6; color: #0b1a22; }
+  button.pri:hover { background: #4fc3f7; }
+  .hide { display: none; }
+</style></head>
+<body>
+<div class="c" id="c">
+  <div class="h"><span class="dot"></span><span id="t">¿Seguís ahí?</span><span class="x">Whiteboard Clock</span></div>
+  <p id="m"></p>
+  <p class="lb" id="lb"></p>
+  <p id="cdl">Si no respondés, se pausa solo en <span class="cd" id="cd">0:00</span></p>
+  <div class="acts"><button class="pri" id="b1" type="button"></button><button id="b2" type="button"></button></div>
+</div>
+<script>
+  const $ = id => document.getElementById(id);
+  let s = null;
+  const hm = t => new Date(t).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+  function tick() {
+    if (!s || !s.afk) return;
+    const a = s.afk;
+    if (a.kind === 'ask') {
+      const min = Math.max(1, Math.round((Date.now() - a.since) / 60e3)), left = Math.max(0, a.deadline - Date.now());
+      $('m').textContent = a.why === 'idle' ? `Hace ${min} min que no usás la compu.` : `Tu reloj sigue prendido desde las ${hm(a.since)}.`;
+      $('cd').textContent = Math.floor(left / 60e3) + ':' + String(Math.floor(left / 1000) % 60).padStart(2, '0');
+    }
+  }
+  function paint() {
+    const a = s && s.afk; if (!a) return;
+    const ask = a.kind === 'ask';
+    $('c').classList.toggle('red', !ask);
+    $('t').textContent = ask ? '¿Seguís ahí?' : 'Pausamos tu reloj';
+    $('lb').textContent = s.label || 'Sin tarea';
+    $('cdl').classList.toggle('hide', !ask);
+    if (!ask) $('m').textContent = `No respondiste el “¿Seguís ahí?”. Quedó en pausa desde las ${hm(a.pausedAt)}: ese rato no cuenta.`;
+    $('b1').textContent = ask ? 'Sí, sigo acá' : 'Reanudar';
+    $('b2').textContent = ask ? `Pausar desde las ${hm(a.since)}` : 'Dejarlo en pausa';
+    tick();
+  }
+  $('b1').onclick = () => { if (s && s.afk) window.mini.cmd(s.afk.kind === 'ask' ? 'afk-ok' : 'afk-resume'); };
+  $('b2').onclick = () => { if (s && s.afk) window.mini.cmd(s.afk.kind === 'ask' ? 'afk-pause' : 'afk-keep'); };
+  window.mini.onState(v => { s = v; paint(); });
+  setInterval(tick, 500);
+  window.mini.ready();
+</script>
+</body></html>

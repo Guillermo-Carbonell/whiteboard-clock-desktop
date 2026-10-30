@@ -35,8 +35,9 @@
   const fmt = ms => { const x = Math.max(0, Math.floor(ms / 1000)); return two(Math.floor(x / 3600)) + ':' + two(Math.floor(x / 60) % 60) + ':' + two(x % 60); };
   function tick() { $('t').textContent = fmt(s.state === 'run' ? s.dur + (Date.now() - s.at) : s.dur); }
   function paint() {
-    $('p').classList.toggle('pause', s.state === 'pause');
-    $('lb').textContent = s.label || 'Sin tarea';
+    const ask = s.afk && s.afk.kind === 'ask'; // "¿Seguís ahí?" pendiente: amarillo
+    $('p').classList.toggle('pause', s.state === 'pause' || ask);
+    $('lb').textContent = ask ? '¿Seguís ahí?' : (s.label || 'Sin tarea');
     $('bp').classList.toggle('hide', s.state !== 'run');
     $('br').classList.toggle('hide', s.state !== 'pause');
     tick();

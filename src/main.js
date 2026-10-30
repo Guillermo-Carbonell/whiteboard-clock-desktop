@@ -86,6 +86,7 @@ function createWindow() {
   // el aviso de "si cerrás se pausa" de la página no tiene que trabar la salida: de eso se encarga quitFlow
   win.webContents.on('will-prevent-unload', e => e.preventDefault());
   win.on('session-end', () => { quitting = true; }); // Windows se apaga: salir sin preguntar
+  win.on('show', () => handleAfk()); win.on('hide', () => handleAfk());
   win.on('closed', () => { win = null; if (mini && !mini.isDestroyed()) mini.destroy(); mini = null; });
   win.loadURL(APP_URL);
 }
@@ -146,11 +147,13 @@ ipcMain.handle('wb:show', () => showWin());
    La página avisa cada vez que el reloj arranca, se pausa o se detiene (y cada 30 s, con lo que lleva). */
 const img = f => nativeImage.createFromPath(path.join(__dirname, '..', 'build', f));
 const ICONS = { run: { ov: img('ov-run.png'), tray: img('tray-run.png') }, pause: { ov: img('ov-pause.png'), tray: img('tray-pause.png') }, off: { ov: null, tray: img('tray.png') } };
-let clock = { state: 'off', label: '', dur: 0, at: 0 };
+let clock = { state: 'off', label: '', dur: 0, at: 0, afk: null };
 ipcMain.on('wb:clock', (e, v) => {
   if (!win || e.sender !== win.webContents || !v) return;
   const state = ['run', 'pause'].includes(v.state) ? v.state : 'off';
-  clock = { state, label: String(v.label || '').slice(0, 120), dur: Number(v.dur) || 0, at: Number(v.at) || Date.now() };
+  const a = v.afk && typeof v.afk === 'object' && ['ask', 'paused'].includes(v.afk.kind) ? v.afk : null;
+  const afk = a ? { kind: a.kind, key: String(a.key || '').slice(0, 200), since: Number(a.since) || 0, deadline: Number(a.deadline) || 0, pausedAt: Number(a.pausedAt) || 0, why: String(a.why || 'idle').slice(0, 20) } : null;
+  clock = { state, label: String(v.label || '').slice(0, 120), dur: Number(v.dur) || 0, at: Number(v.at) || Date.now(), afk };
   paintClock();
 });
 function paintClock() {
@@ -160,7 +163,7 @@ function paintClock() {
     tray.setImage(ic.tray);
     tray.setToolTip((clock.state === 'run' ? '▶ ' + clock.label : clock.state === 'pause' ? '⏸ En pausa · ' + clock.label : 'Whiteboard Clock').slice(0, 120));
   }
-  refreshMini();
+  refreshMini(); handleAfk();
 }
 
 // ¿hay un juego o un video en pantalla completa? (ahí el mini reloj se esconde)
@@ -244,16 +247,61 @@ function refreshMini() {
   if (miniReady) mini.webContents.send('mini:state', clock);
   if (miniReady && !mini.isVisible()) mini.showInactive();
 }
-ipcMain.on('mini:ready', e => { if (!mini || e.sender !== mini.webContents) return; miniReady = true; refreshMini(); });
-ipcMain.on('mini:cmd', (e, c) => { if (!mini || e.sender !== mini.webContents || !win) return; if (['pause', 'resume', 'stop'].includes(c)) win.webContents.send('wb:clock-cmd', c); });
-ipcMain.on('mini:open', e => { if (mini && e.sender === mini.webContents) showWin(); });
+const fromUs = e => (mini && !mini.isDestroyed() && e.sender === mini.webContents) || (toast && !toast.isDestroyed() && e.sender === toast.webContents);
+ipcMain.on('mini:ready', e => {
+  if (mini && !mini.isDestroyed() && e.sender === mini.webContents) { miniReady = true; refreshMini(); }
+  else if (toast && !toast.isDestroyed() && e.sender === toast.webContents) { toastReady = true; handleAfk(); }
+});
+ipcMain.on('mini:cmd', (e, c) => { if (!fromUs(e) || !win) return; if (['pause', 'resume', 'stop', 'afk-ok', 'afk-pause', 'afk-resume', 'afk-keep'].includes(c)) win.webContents.send('wb:clock-cmd', c); });
+ipcMain.on('mini:open', e => { if (fromUs(e)) showWin(); });
+
+/* ───────── "¿Seguís ahí?" ─────────
+   Con la ventana abierta: la trae adelante y el cartel sale en la página, como en la web.
+   Con la ventana cerrada (en la barra): un cartel propio abajo a la derecha, encima de todo, que se responde ahí mismo. */
+let toast = null, toastReady = false, afkSeen = '';
+const TOAST_W = 360, TOAST_H = 168;
+function toastRect() {
+  const wa = screen.getPrimaryDisplay().workArea;
+  return { x: wa.x + wa.width - TOAST_W - 12, y: wa.y + wa.height - TOAST_H - 12, width: TOAST_W, height: TOAST_H };
+}
+function hideToast() { if (toast && !toast.isDestroyed() && toast.isVisible()) toast.hide(); }
+function showToast() {
+  const r = toastRect();
+  if (!toast || toast.isDestroyed()) {
+    toast = new BrowserWindow({ ...r, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
+      skipTaskbar: true, focusable: false, alwaysOnTop: true, show: false, hasShadow: false, backgroundColor: '#00000000',
+      webPreferences: { preload: path.join(__dirname, 'mini-preload.js'), contextIsolation: true, sandbox: true } });
+    toast.setAlwaysOnTop(true, 'screen-saver');
+    toastReady = false;
+    toast.loadFile(path.join(__dirname, 'toast.html'));
+    toast.on('closed', () => { toast = null; toastReady = false; });
+  }
+  const b = toast.getBounds(); if (Math.abs(b.x - r.x) > 2 || Math.abs(b.y - r.y) > 2) toast.setBounds(r);
+  if (!toastReady) return;
+  toast.webContents.send('mini:state', clock);
+  if (!toast.isVisible()) toast.showInactive(); else toast.moveTop();
+}
+function handleAfk() {
+  const a = clock.afk;
+  if (!a || quitting) { afkSeen = ''; hideToast(); if (win && !win.isDestroyed()) win.flashFrame(false); return; }
+  const open = win && !win.isDestroyed() && win.isVisible();
+  if (afkSeen !== a.key) {
+    afkSeen = a.key;
+    if (open) { // la ventana está abierta: adelante, con el ícono titilando, y el cartel lo muestra la página
+      if (win.isMinimized()) win.restore();
+      win.show(); win.setAlwaysOnTop(true); win.focus(); win.setAlwaysOnTop(false); win.flashFrame(true);
+    }
+  }
+  if (open) hideToast(); else showToast();
+}
 function watchMini() {
   setInterval(() => {
     // se esconde recién si la pantalla completa sigue un momento (abrir el menú o los íconos ocultos no cuenta); vuelve al toque
     const fs1 = fullScreenNow(); fsHits = fs1 ? fsHits + 1 : 0;
     const busy = fsHits >= 3; if (busy !== fsBusy) { fsBusy = busy; refreshMini(); }
     else if (mini && !mini.isDestroyed() && mini.isVisible() && ++spotTick % 5 === 0) refreshMini(); // cada 2 s: si aparecieron íconos o cambió la pantalla, se reacomoda
-    if (mini && !mini.isDestroyed() && mini.isVisible()) mini.moveTop(); // si tocás la barra, Windows la pone adelante: el mini reloj vuelve arriba
+    if (mini && !mini.isDestroyed() && mini.isVisible()) mini.moveTop();
+    if (toast && !toast.isDestroyed() && toast.isVisible()) toast.moveTop(); // si tocás la barra, Windows la pone adelante: el mini reloj vuelve arriba
   }, 400);
   for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(ev, () => refreshMini());
 }
