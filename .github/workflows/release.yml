@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  issues: write
 jobs:
   build:
     runs-on: windows-latest
@@ -17,6 +18,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx electron-builder --win --publish always
+      - name: Armar y publicar
+        shell: bash
+        run: npx electron-builder --win --publish always 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # si falla, deja el final del registro en un issue para poder verlo
+      - name: Avisar el error
+        if: failure()
+        shell: bash
+        run: tail -60 build.log > tail.txt; gh issue create --title "Falló el instalador (${{ github.ref_name }})" --body-file tail.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
