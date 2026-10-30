@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Mini reloj</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+  .pill { box-sizing: border-box; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 12px;
+    background: #23272c; border: 1px solid #2fbf5b55; border-radius: 999px; color: #f2f2f2;
+    font: 13px 'Segoe UI', system-ui, sans-serif; -webkit-app-region: drag; cursor: default; }
+  .pill.pause { border-color: #f2b63255; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #2fbf5b; flex: none; }
+  .pause .dot { background: #f2b632; }
+  .t { font: 700 14px Consolas, 'Cascadia Mono', monospace; flex: none; }
+  .pause .t { color: #a7aeb6; }
+  .lb { flex: 1; min-width: 0; color: #a7aeb6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-app-region: no-drag; cursor: pointer; }
+  .lb:hover { color: #f2f2f2; }
+  .pause .lb { color: #8a929b; }
+  button { -webkit-app-region: no-drag; flex: none; width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; padding: 0; display: grid; place-items: center; cursor: pointer; }
+  button:hover { background: #ffffff1a; }
+  .hide { display: none; }
+</style></head>
+<body>
+<div class="pill" id="p" title="Arrastralo para moverlo">
+  <span class="dot"></span>
+  <span class="t" id="t">00:00:00</span>
+  <span class="lb" id="lb" title="Abrir Whiteboard Clock"></span>
+  <button id="bp" aria-label="Pausar" title="Pausar"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1" width="2.4" height="8" rx=".6" fill="#c9ced4"/><rect x="6.1" y="1" width="2.4" height="8" rx=".6" fill="#c9ced4"/></svg></button>
+  <button id="br" class="hide" aria-label="Seguir" title="Seguir"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 1 9 5 2 9z" fill="#2fbf5b"/></svg></button>
+  <button id="bs" aria-label="Detener" title="Detener"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1.2" fill="#ef5350"/></svg></button>
+</div>
+<script>
+  const $ = id => document.getElementById(id);
+  let s = { state: 'off', label: '', dur: 0, at: 0 };
+  const two = n => String(n).padStart(2, '0');
+  const fmt = ms => { const x = Math.max(0, Math.floor(ms / 1000)); return two(Math.floor(x / 3600)) + ':' + two(Math.floor(x / 60) % 60) + ':' + two(x % 60); };
+  function tick() { $('t').textContent = fmt(s.state === 'run' ? s.dur + (Date.now() - s.at) : s.dur); }
+  function paint() {
+    $('p').classList.toggle('pause', s.state === 'pause');
+    $('lb').textContent = s.label || 'Sin tarea';
+    $('bp').classList.toggle('hide', s.state !== 'run');
+    $('br').classList.toggle('hide', s.state !== 'pause');
+    tick();
+  }
+  window.mini.onState(v => { s = v; paint(); });
+  $('bp').onclick = () => window.mini.cmd('pause');
+  $('br').onclick = () => window.mini.cmd('resume');
+  $('bs').onclick = () => window.mini.cmd('stop');
+  $('lb').onclick = () => window.mini.open();
+  setInterval(tick, 500);
+  window.mini.ready();
+</script>
+</body></html>

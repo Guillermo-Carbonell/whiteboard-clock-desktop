@@ -4,8 +4,10 @@
 //  · la inactividad se mide desde Windows (mouse y teclado de toda la compu), sin pedir permisos al navegador;
 //  · los links de afuera (Drive, Discord…) se abren en el navegador predeterminado;
 //  · arranca con Windows y queda un ícono en la barra (se prende y apaga desde Configuración);
-//  · se actualiza sola y avisa con un cartel para reiniciar.
-const { app, BrowserWindow, Tray, Menu, shell, ipcMain, powerMonitor, nativeImage, session, dialog } = require('electron');
+//  · se actualiza sola y avisa con un cartel para reiniciar;
+//  · los íconos muestran si el reloj corre o está en pausa, y hay un mini reloj sobre la barra de Windows.
+const { app, BrowserWindow, Tray, Menu, shell, ipcMain, powerMonitor, nativeImage, session, dialog, screen } = require('electron');
+const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -26,7 +28,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); }
 
 /* ───────── opciones (arrancar con Windows, ícono en la barra, tamaño de la ventana) ───────── */
 const cfgFile = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULTS = { autoStart: true, tray: true, bounds: null, maximized: false };
+const DEFAULTS = { autoStart: true, tray: true, mini: true, miniPos: null, bounds: null, maximized: false };
 let cfg = { ...DEFAULTS };
 function loadCfg() { try { cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; } catch { cfg = { ...DEFAULTS }; } }
 function saveCfg() { try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 1)); } catch { /* */ } }
@@ -43,7 +45,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: b.width || 1360, height: b.height || 860, x: b.x, y: b.y, minWidth: 420, minHeight: 500,
     title: 'Whiteboard Clock', icon: path.join(__dirname, '..', 'build', 'icon.png'), backgroundColor: '#1a1d21', show: false, autoHideMenuBar: true,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: true },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: true, backgroundThrottling: false },
   });
   win.setMenuBarVisibility(false);
   if (cfg.maximized) win.maximize();
@@ -84,7 +86,7 @@ function createWindow() {
   // el aviso de "si cerrás se pausa" de la página no tiene que trabar la salida: de eso se encarga quitFlow
   win.webContents.on('will-prevent-unload', e => e.preventDefault());
   win.on('session-end', () => { quitting = true; }); // Windows se apaga: salir sin preguntar
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; if (mini && !mini.isDestroyed()) mini.destroy(); mini = null; });
   win.loadURL(APP_URL);
 }
 /* ───────── salir: si el reloj está corriendo, preguntar y pausarlo antes de cerrar ───────── */
@@ -107,7 +109,7 @@ async function quitFlow() {
       if (response !== 0) return;
       await runInPage('window.__wbPauseForQuit ? window.__wbPauseForQuit() : true', 8000);
     }
-    quitting = true; app.quit();
+    quitting = true; refreshMini(); app.quit();
   } finally { asking = false; }
 }
 function showWin() { if (!win) return createWindow(); if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
@@ -121,21 +123,109 @@ function setTray(on) {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Abrir Whiteboard Clock', click: showWin },
     { label: 'Abrir Whiteboard Tasks', click: () => { showWin(); win.loadURL(APP_URL + 'tasks.html'); } },
+    { label: 'Acomodar el mini reloj', click: () => { cfg.miniPos = null; saveCfg(); refreshMini(); } },
     { type: 'separator' },
     { label: 'Salir', click: () => quitFlow() },
   ]));
   tray.on('click', showWin);
+  paintClock();
 }
 
 /* ───────── lo que la página le puede pedir a la app ───────── */
-ipcMain.on('wb:info', e => { e.returnValue = { version: app.getVersion(), dev: DEV_URL || '', settings: { autoStart: !!cfg.autoStart, tray: !!cfg.tray } }; });
+ipcMain.on('wb:info', e => { e.returnValue = { version: app.getVersion(), dev: DEV_URL || '', settings: { autoStart: !!cfg.autoStart, tray: !!cfg.tray, mini: !!cfg.mini } }; });
 ipcMain.handle('wb:idle', () => powerMonitor.getSystemIdleTime()); // segundos sin tocar mouse ni teclado, en toda la compu
 ipcMain.handle('wb:set', (e, k, v) => {
   if (k === 'autoStart') { cfg.autoStart = !!v; applyAutoStart(); }
   if (k === 'tray') { cfg.tray = !!v; setTray(cfg.tray); }
+  if (k === 'mini') { cfg.mini = !!v; cfg.miniPos = null; refreshMini(); } // prenderlo de nuevo lo vuelve a su lugar
   saveCfg(); return true;
 });
 ipcMain.handle('wb:open', (e, url) => openOutside(String(url || '')));
+ipcMain.handle('wb:show', () => showWin());
+
+/* ───────── el reloj en los íconos y el mini reloj sobre la barra ─────────
+   La página avisa cada vez que el reloj arranca, se pausa o se detiene (y cada 30 s, con lo que lleva). */
+const img = f => nativeImage.createFromPath(path.join(__dirname, '..', 'build', f));
+const ICONS = { run: { ov: img('ov-run.png'), tray: img('tray-run.png') }, pause: { ov: img('ov-pause.png'), tray: img('tray-pause.png') }, off: { ov: null, tray: img('tray.png') } };
+let clock = { state: 'off', label: '', dur: 0, at: 0 };
+ipcMain.on('wb:clock', (e, v) => {
+  if (!win || e.sender !== win.webContents || !v) return;
+  const state = ['run', 'pause'].includes(v.state) ? v.state : 'off';
+  clock = { state, label: String(v.label || '').slice(0, 120), dur: Number(v.dur) || 0, at: Number(v.at) || Date.now() };
+  paintClock();
+});
+function paintClock() {
+  const ic = ICONS[clock.state];
+  if (win && !win.isDestroyed()) win.setOverlayIcon(ic.ov, clock.state === 'run' ? 'Reloj corriendo' : clock.state === 'pause' ? 'Reloj en pausa' : '');
+  if (tray) {
+    tray.setImage(ic.tray);
+    tray.setToolTip((clock.state === 'run' ? '▶ ' + clock.label : clock.state === 'pause' ? '⏸ En pausa · ' + clock.label : 'Whiteboard Clock').slice(0, 120));
+  }
+  refreshMini();
+}
+
+// ¿hay un juego o un video en pantalla completa? (ahí el mini reloj se esconde)
+let queryNotif = null;
+try {
+  if (process.platform === 'win32') queryNotif = require('koffi').load('shell32.dll').func('int __stdcall SHQueryUserNotificationState(_Out_ int *pquns)');
+} catch { queryNotif = null; }
+function fullScreenNow() {
+  if (!queryNotif) return false;
+  try { const o = [0]; return queryNotif(o) === 0 && [2, 3, 4].includes(o[0]); } catch { return false; } // 2 ocupado, 3 juego, 4 presentación
+}
+
+const MINI_W = 330;
+let mini = null, miniReady = false, fsBusy = false;
+// el lugar de siempre: pegado sobre la barra de la pantalla principal (Windows 11: a la izquierda; Windows 10: al lado de los íconos chiquitos)
+function miniSpot() {
+  const d = screen.getPrimaryDisplay(), b = d.bounds, w = d.workArea;
+  const below = (b.y + b.height) - (w.y + w.height), above = w.y - b.y, th = below || above;
+  if (th < 20) return null; // la barra se oculta sola o está al costado
+  const h = Math.max(22, Math.min(34, th - 8));
+  const y = below ? w.y + w.height + Math.round((below - h) / 2) : b.y + Math.round((above - h) / 2);
+  const win11 = process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22000;
+  const x = win11 ? b.x + 12 : b.x + b.width - MINI_W - 300;
+  return { x, y, width: MINI_W, height: h };
+}
+function miniRect() {
+  const def = miniSpot(), p = cfg.miniPos;
+  if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+    const h = def ? def.height : 32, r = { x: Math.round(p.x), y: Math.round(p.y), width: MINI_W, height: h };
+    const on = screen.getAllDisplays().some(d => r.x + 40 > d.bounds.x && r.x < d.bounds.x + d.bounds.width - 40 && r.y + 10 > d.bounds.y && r.y < d.bounds.y + d.bounds.height - 10);
+    if (on) return r;
+  }
+  return def;
+}
+function makeMini(r) {
+  mini = new BrowserWindow({ ...r, frame: false, transparent: true, resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
+    skipTaskbar: true, focusable: false, alwaysOnTop: true, show: false, hasShadow: false, backgroundColor: '#00000000',
+    webPreferences: { preload: path.join(__dirname, 'mini-preload.js'), contextIsolation: true, sandbox: true } });
+  mini.setAlwaysOnTop(true, 'screen-saver');
+  mini.setMenuBarVisibility(false);
+  miniReady = false;
+  mini.loadFile(path.join(__dirname, 'mini.html'));
+  mini.on('moved', () => { if (!mini) return; const b = mini.getBounds(); cfg.miniPos = { x: b.x, y: b.y }; saveCfg(); });
+  mini.on('closed', () => { mini = null; miniReady = false; });
+}
+function refreshMini() {
+  if (!app.isReady()) return;
+  const r = (cfg.mini && clock.state !== 'off' && !fsBusy && win && !quitting) ? miniRect() : null;
+  if (!r) { if (mini && !mini.isDestroyed() && mini.isVisible()) mini.hide(); return; }
+  if (!mini || mini.isDestroyed()) makeMini(r);
+  const b = mini.getBounds(); if (b.x !== r.x || b.y !== r.y || b.width !== r.width || b.height !== r.height) mini.setBounds(r);
+  if (miniReady) mini.webContents.send('mini:state', clock);
+  if (miniReady && !mini.isVisible()) mini.showInactive();
+}
+ipcMain.on('mini:ready', e => { if (!mini || e.sender !== mini.webContents) return; miniReady = true; refreshMini(); });
+ipcMain.on('mini:cmd', (e, c) => { if (!mini || e.sender !== mini.webContents || !win) return; if (['pause', 'resume', 'stop'].includes(c)) win.webContents.send('wb:clock-cmd', c); });
+ipcMain.on('mini:open', e => { if (mini && e.sender === mini.webContents) showWin(); });
+function watchMini() {
+  setInterval(() => {
+    const fs1 = fullScreenNow(); if (fs1 !== fsBusy) { fsBusy = fs1; refreshMini(); }
+    if (mini && !mini.isDestroyed() && mini.isVisible()) mini.moveTop(); // si tocás la barra, Windows la pone adelante: el mini reloj vuelve arriba
+  }, 1500);
+  for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(ev, () => refreshMini());
+}
 
 /* ───────── "Continuar con Google" en el navegador de la persona ─────────
    Google se abre en su navegador (con su cuenta, autocompletar y llaves de acceso). Esa página, al terminar, vuelve a
@@ -188,7 +278,7 @@ app.whenReady().then(() => {
   const ua = session.defaultSession.getUserAgent().replace(/\s?Electron\/[\d.]+/, '').replace(/\s?whiteboard-clock-desktop\/[\d.]+/i, '').replace(/\s?Whiteboard Clock\/[\d.]+/i, '');
   session.defaultSession.setUserAgent(ua); app.userAgentFallback = ua;
   Menu.setApplicationMenu(null);
-  createWindow(); setTray(cfg.tray); startUpdates();
+  createWindow(); setTray(cfg.tray); startUpdates(); watchMini();
 });
 app.on('before-quit', () => { quitting = true; }); // actualizar o apagar Windows: salir directo
 app.on('window-all-closed', () => { if (!cfg.tray || !tray) app.quit(); });

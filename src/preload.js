@@ -14,5 +14,8 @@ if (OK.test(location.origin) || (info.dev && location.href.startsWith(info.dev))
     restartToUpdate: () => ipcRenderer.invoke('wb:restart'),
     googleLogin: () => ipcRenderer.invoke('wb:google'),
     onUpdateReady: cb => ipcRenderer.on('wb:update-ready', (e, v) => cb(v)),
+    setClock: s => ipcRenderer.send('wb:clock', s),
+    onClockCmd: cb => ipcRenderer.on('wb:clock-cmd', (e, c) => cb(c)),
+    showApp: () => ipcRenderer.invoke('wb:show'),
   });
 }
