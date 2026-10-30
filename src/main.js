@@ -181,6 +181,7 @@ try {
       cls: u.func('int __stdcall GetClassNameW(void *hWnd, _Out_ uint8_t *lpClassName, int nMaxCount)'),
       find: u.func('void * __stdcall FindWindowW(str16 lpClassName, str16 lpWindowName)'),
       findEx: u.func('void * __stdcall FindWindowExW(void *hParent, void *hAfter, str16 lpClassName, str16 lpWindowName)'),
+      visible: u.func('bool __stdcall IsWindowVisible(void *hWnd)'),
       RECT,
     };
   }
@@ -210,10 +211,48 @@ function trayArea() {
     const bar = W32.find('Shell_TrayWnd', null); if (!bar) return null;
     const box = r => { const o = {}; if (!W32.rect(r, o)) return null; return screen.screenToDipRect(null, { x: o.left, y: o.top, width: o.right - o.left, height: o.bottom - o.top }); };
     const notify = W32.findEx(bar, null, 'TrayNotifyWnd', null);
-    return { bar: box(bar), tray: notify ? box(notify) : null };
+    // todo lo que Windows pone a la derecha de la barra como ventana propia (en Windows 10, por ejemplo, "Noticias e intereses" con el clima)
+    const right = []; let c = null;
+    for (let k = 0; k < 64; k++) {
+      c = W32.findEx(bar, c, null, null); if (!c) break;
+      if (!W32.visible(c)) continue;
+      const r = box(c); if (r && r.width > 0 && r.height > 0) right.push(r);
+    }
+    return { bar: box(bar), tray: notify ? box(notify) : null, kids: right };
   } catch { return null; }
 }
-// Fijo sobre la barra, pegado a la izquierda de la flechita ^ (igual en Windows 10 y 11; en el 11 la izquierda es del clima y los widgets).
+// Windows 11: el clima (botón de Widgets) no es una ventana aparte; se pregunta a Windows dónde está (cada 30 s, sin trabar nada).
+// Se guarda como proporción desde el borde derecho de la barra, así no importa el zoom de la pantalla.
+let widgets = { at: 0, busy: false, fromRight: null, guess: null };
+function readWidgets() {
+  if (widgets.busy || Date.now() - widgets.at < 30e3 || process.platform !== 'win32') return;
+  widgets.busy = true; widgets.at = Date.now();
+  const ps = `$ErrorActionPreference='Stop'
+Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+$A=[System.Windows.Automation.AutomationElement]
+$tb=$A::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children,(New-Object System.Windows.Automation.PropertyCondition($A::ClassNameProperty,'Shell_TrayWnd')))
+$w=$tb.FindFirst([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty,'WidgetsButton')))
+$t=$tb.Current.BoundingRectangle
+if($w -and -not $w.Current.IsOffscreen){$r=$w.Current.BoundingRectangle; "OK $($t.Left) $($t.Right) $($r.Left) $($r.Right)"} else {"NONE"}`;
+  require('child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true, timeout: 10e3 }, (err, out) => {
+    widgets.busy = false;
+    const m = !err && String(out).match(/OK\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)/);
+    if (m) { const [L, R, wl] = [+m[1], +m[2], +m[3]]; widgets.fromRight = R > L ? (R - wl) / (R - L) : null; }
+    else if (!err && /NONE/.test(out)) widgets.fromRight = null;
+    else widgets.fromRight = undefined; // no se pudo preguntar: se usa la configuración de la barra
+    if (widgets.fromRight === undefined) readWidgetsReg();
+    refreshMini();
+  });
+}
+// plan B: con el clima prendido y los íconos a la izquierda, Windows 11 lo pone al lado de la flechita ^
+function readWidgetsReg() {
+  require('child_process').execFile('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'], { windowsHide: true, timeout: 5e3 }, (err, out) => {
+    if (err) { widgets.guess = null; return; }
+    const v = k => { const m = String(out).match(new RegExp(k + '\\s+REG_DWORD\\s+0x([0-9a-f]+)', 'i')); return m ? parseInt(m[1], 16) : null; };
+    const on = v('TaskbarDa') !== 0, left = v('TaskbarAl') === 0;
+    widgets.guess = on && left ? 170 : 0; refreshMini();
+  });
+}
 function miniRect() {
   const d = screen.getPrimaryDisplay(), b = d.bounds, w = d.workArea;
   const below = (b.y + b.height) - (w.y + w.height), above = w.y - b.y, th = below || above;
@@ -222,9 +261,22 @@ function miniRect() {
   const y = below ? w.y + w.height + Math.round((below - h) / 2) : b.y + Math.round((above - h) / 2);
   const win11 = process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22000;
   let x = b.x + b.width - MINI_W - (win11 ? 290 : 300); // por si no se pudo leer dónde están los íconos
-  const t = trayArea()?.tray;
+  const ta = trayArea(), t = ta?.tray;
   // solo si lo que leyó tiene sentido: dentro de la pantalla, a la derecha, y no más ancho que media pantalla
-  if (t && t.width > 30 && t.width < b.width / 2 && t.x > b.x + MINI_W + 40 && t.x + t.width <= b.x + b.width + 4) x = t.x - MINI_W - 8;
+  if (t && t.width > 30 && t.width < b.width / 2 && t.x > b.x + MINI_W + 40 && t.x + t.width <= b.x + b.width + 4) {
+    let left = t.x;
+    const mid = b.x + b.width / 2;
+    // lo que haya pegado a la izquierda de los íconos (el clima de Windows 10, por ejemplo): el mini reloj va antes
+    for (const k of ta.kids || []) if (k.x > mid && k.x < left && k.x + k.width <= t.x + 4 && k.width < b.width / 3) left = k.x;
+    // Windows 11: el botón del clima, si está a la derecha
+    if (win11) {
+      readWidgets();
+      const bar = ta.bar;
+      if (widgets.fromRight > 0 && widgets.fromRight < 0.5 && bar) { const wl = bar.x + bar.width - widgets.fromRight * bar.width; if (wl > mid && wl < left) left = wl; }
+      else if (widgets.fromRight === undefined && widgets.guess) left -= widgets.guess;
+    }
+    x = left - MINI_W - 8;
+  }
   return { x: Math.round(x), y: Math.round(y), width: MINI_W, height: h };
 }
 function makeMini(r) {
@@ -295,6 +347,7 @@ function handleAfk() {
   if (open) hideToast(); else showToast();
 }
 function watchMini() {
+  if (process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22000) readWidgets(); // así ya se sabe dónde está el clima antes de mostrar el mini reloj
   setInterval(() => {
     // se esconde recién si la pantalla completa sigue un momento (abrir el menú o los íconos ocultos no cuenta); vuelve al toque
     const fs1 = fullScreenNow(); fsHits = fs1 ? fsHits + 1 : 0;
