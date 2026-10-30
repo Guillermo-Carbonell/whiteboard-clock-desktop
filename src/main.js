@@ -5,7 +5,7 @@
 //  · los links de afuera (Drive, Discord…) se abren en el navegador predeterminado;
 //  · arranca con Windows y queda un ícono en la barra (se prende y apaga desde Configuración);
 //  · se actualiza sola y avisa con un cartel para reiniciar;
-//  · los íconos muestran si el reloj corre o está en pausa, y hay un mini reloj sobre la barra de Windows.
+//  · los íconos muestran si el reloj corre o está en pausa, y hay un mini reloj fijo sobre la barra de Windows.
 const { app, BrowserWindow, Tray, Menu, shell, ipcMain, powerMonitor, nativeImage, session, dialog, screen } = require('electron');
 const os = require('os');
 const path = require('path');
@@ -28,9 +28,9 @@ if (!app.requestSingleInstanceLock()) { app.quit(); }
 
 /* ───────── opciones (arrancar con Windows, ícono en la barra, tamaño de la ventana) ───────── */
 const cfgFile = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULTS = { autoStart: true, tray: true, mini: true, miniPos: null, bounds: null, maximized: false };
+const DEFAULTS = { autoStart: true, tray: true, mini: true, bounds: null, maximized: false };
 let cfg = { ...DEFAULTS };
-function loadCfg() { try { cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; } catch { cfg = { ...DEFAULTS }; } }
+function loadCfg() { try { cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; } catch { cfg = { ...DEFAULTS }; } delete cfg.miniPos; }
 function saveCfg() { try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 1)); } catch { /* */ } }
 function applyAutoStart() { if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart, path: process.execPath }); }
 
@@ -123,7 +123,6 @@ function setTray(on) {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Abrir Whiteboard Clock', click: showWin },
     { label: 'Abrir Whiteboard Tasks', click: () => { showWin(); win.loadURL(APP_URL + 'tasks.html'); } },
-    { label: 'Acomodar el mini reloj', click: () => { cfg.miniPos = null; saveCfg(); refreshMini(); } },
     { type: 'separator' },
     { label: 'Salir', click: () => quitFlow() },
   ]));
@@ -137,7 +136,7 @@ ipcMain.handle('wb:idle', () => powerMonitor.getSystemIdleTime()); // segundos s
 ipcMain.handle('wb:set', (e, k, v) => {
   if (k === 'autoStart') { cfg.autoStart = !!v; applyAutoStart(); }
   if (k === 'tray') { cfg.tray = !!v; setTray(cfg.tray); }
-  if (k === 'mini') { cfg.mini = !!v; cfg.miniPos = null; refreshMini(); } // prenderlo de nuevo lo vuelve a su lugar
+  if (k === 'mini') { cfg.mini = !!v; refreshMini(); }
   saveCfg(); return true;
 });
 ipcMain.handle('wb:open', (e, url) => openOutside(String(url || '')));
@@ -177,6 +176,8 @@ try {
       fg: u.func('void * __stdcall GetForegroundWindow()'),
       rect: u.func('bool __stdcall GetWindowRect(void *hWnd, _Out_ WB_RECT *lpRect)'),
       cls: u.func('int __stdcall GetClassNameW(void *hWnd, _Out_ uint8_t *lpClassName, int nMaxCount)'),
+      find: u.func('void * __stdcall FindWindowW(str16 lpClassName, str16 lpWindowName)'),
+      findEx: u.func('void * __stdcall FindWindowExW(void *hParent, void *hAfter, str16 lpClassName, str16 lpWindowName)'),
       RECT,
     };
   }
@@ -197,36 +198,40 @@ function fullScreenNow() {
 }
 
 const MINI_W = 330;
-let mini = null, miniReady = false, fsBusy = false, fsHits = 0;
-// el lugar de siempre: pegado sobre la barra de la pantalla principal (Windows 11: a la izquierda; Windows 10: al lado de los íconos chiquitos)
-function miniSpot() {
+let mini = null, miniReady = false, fsBusy = false, fsHits = 0, spotTick = 0;
+// Dónde están los íconos de al lado de la hora (la flechita ^, los íconos, la hora): la barra de la pantalla principal.
+// Sirve en Windows 10 y 11, con la barra abajo o arriba, y con cualquier zoom de pantalla. Si no se puede leer, null.
+function trayArea() {
+  if (!W32) return null;
+  try {
+    const bar = W32.find('Shell_TrayWnd', null); if (!bar) return null;
+    const box = r => { const o = {}; if (!W32.rect(r, o)) return null; return screen.screenToDipRect(null, { x: o.left, y: o.top, width: o.right - o.left, height: o.bottom - o.top }); };
+    const notify = W32.findEx(bar, null, 'TrayNotifyWnd', null);
+    return { bar: box(bar), tray: notify ? box(notify) : null };
+  } catch { return null; }
+}
+// Fijo sobre la barra, pegado a la izquierda de la flechita ^ (igual en Windows 10 y 11; en el 11 la izquierda es del clima y los widgets).
+function miniRect() {
   const d = screen.getPrimaryDisplay(), b = d.bounds, w = d.workArea;
   const below = (b.y + b.height) - (w.y + w.height), above = w.y - b.y, th = below || above;
-  if (th < 20) return null; // la barra se oculta sola o está al costado
+  if (th < 20) return null; // la barra se oculta sola o está al costado: no hay lugar fijo
   const h = Math.max(24, Math.min(36, th - 4));
   const y = below ? w.y + w.height + Math.round((below - h) / 2) : b.y + Math.round((above - h) / 2);
   const win11 = process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22000;
-  const x = win11 ? b.x + 12 : b.x + b.width - MINI_W - 300;
-  return { x, y, width: MINI_W, height: h };
-}
-function miniRect() {
-  const def = miniSpot(), p = cfg.miniPos;
-  if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
-    const h = def ? def.height : 32, r = { x: Math.round(p.x), y: Math.round(p.y), width: MINI_W, height: h };
-    const on = screen.getAllDisplays().some(d => r.x + 40 > d.bounds.x && r.x < d.bounds.x + d.bounds.width - 40 && r.y + 10 > d.bounds.y && r.y < d.bounds.y + d.bounds.height - 10);
-    if (on) return r;
-  }
-  return def;
+  let x = b.x + b.width - MINI_W - (win11 ? 290 : 300); // por si no se pudo leer dónde están los íconos
+  const t = trayArea()?.tray;
+  // solo si lo que leyó tiene sentido: dentro de la pantalla, a la derecha, y no más ancho que media pantalla
+  if (t && t.width > 30 && t.width < b.width / 2 && t.x > b.x + MINI_W + 40 && t.x + t.width <= b.x + b.width + 4) x = t.x - MINI_W - 8;
+  return { x: Math.round(x), y: Math.round(y), width: MINI_W, height: h };
 }
 function makeMini(r) {
   mini = new BrowserWindow({ ...r, frame: false, transparent: true, resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
-    skipTaskbar: true, focusable: false, alwaysOnTop: true, show: false, hasShadow: false, backgroundColor: '#00000000',
+    skipTaskbar: true, focusable: false, movable: false, alwaysOnTop: true, show: false, hasShadow: false, backgroundColor: '#00000000',
     webPreferences: { preload: path.join(__dirname, 'mini-preload.js'), contextIsolation: true, sandbox: true } });
   mini.setAlwaysOnTop(true, 'screen-saver');
   mini.setMenuBarVisibility(false);
   miniReady = false;
   mini.loadFile(path.join(__dirname, 'mini.html'));
-  mini.on('moved', () => { if (!mini) return; const b = mini.getBounds(); cfg.miniPos = { x: b.x, y: b.y }; saveCfg(); });
   mini.on('closed', () => { mini = null; miniReady = false; });
 }
 function refreshMini() {
@@ -247,6 +252,7 @@ function watchMini() {
     // se esconde recién si la pantalla completa sigue un momento (abrir el menú o los íconos ocultos no cuenta); vuelve al toque
     const fs1 = fullScreenNow(); fsHits = fs1 ? fsHits + 1 : 0;
     const busy = fsHits >= 3; if (busy !== fsBusy) { fsBusy = busy; refreshMini(); }
+    else if (mini && !mini.isDestroyed() && mini.isVisible() && ++spotTick % 5 === 0) refreshMini(); // cada 2 s: si aparecieron íconos o cambió la pantalla, se reacomoda
     if (mini && !mini.isDestroyed() && mini.isVisible()) mini.moveTop(); // si tocás la barra, Windows la pone adelante: el mini reloj vuelve arriba
   }, 400);
   for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(ev, () => refreshMini());

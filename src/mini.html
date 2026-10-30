@@ -6,21 +6,21 @@
   body { box-sizing: border-box; padding: 2px; } /* aire para que el borde no se corte con la pantalla al 125 % o 150 % */
   .pill { box-sizing: border-box; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 12px;
     background: #23272c; border: 1px solid #2fbf5b55; border-radius: 999px; color: #f2f2f2;
-    font: 13px 'Segoe UI', system-ui, sans-serif; -webkit-app-region: drag; cursor: default; }
+    font: 13px 'Segoe UI', system-ui, sans-serif; cursor: default; }
   .pill.pause { border-color: #f2b63255; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #2fbf5b; flex: none; }
   .pause .dot { background: #f2b632; }
   .t { font: 700 14px Consolas, 'Cascadia Mono', monospace; flex: none; }
   .pause .t { color: #a7aeb6; }
-  .lb { flex: 1; min-width: 0; color: #a7aeb6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-app-region: no-drag; cursor: pointer; }
+  .lb { flex: 1; min-width: 0; color: #a7aeb6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
   .lb:hover { color: #f2f2f2; }
   .pause .lb { color: #8a929b; }
-  button { -webkit-app-region: no-drag; flex: none; width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; padding: 0; display: grid; place-items: center; cursor: pointer; }
+  button { flex: none; width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; padding: 0; display: grid; place-items: center; cursor: pointer; }
   button:hover { background: #ffffff1a; }
   .hide { display: none; }
 </style></head>
 <body>
-<div class="pill" id="p" title="Arrastralo para moverlo">
+<div class="pill" id="p">
   <span class="dot"></span>
   <span class="t" id="t">00:00:00</span>
   <span class="lb" id="lb" title="Abrir Whiteboard Clock"></span>
