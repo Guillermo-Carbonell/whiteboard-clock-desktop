@@ -26,6 +26,26 @@ app.setAppUserModelId('games.whiteboard.clock'); // avisos de Windows con el nom
 /* ───────── una sola app abierta ───────── */
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
+/* ───────── links "whiteboardclock://" (la página los usa para abrir una tarea en la app) ───────── */
+const PROTO = 'whiteboardclock';
+if (app.isPackaged) app.setAsDefaultProtocolClient(PROTO); else if (process.argv[1]) app.setAsDefaultProtocolClient(PROTO, process.execPath, [path.resolve(process.argv[1])]);
+/** whiteboardclock://open/?u=tasks%23%2Ft%2F12 → "tasks#/t/12" (solo páginas de la app: Tasks o Clock, nunca otra web). */
+function linkTarget(argv) {
+  const raw = (argv || []).find(a => typeof a === 'string' && a.toLowerCase().startsWith(PROTO + '://')); if (!raw) return null;
+  try { const u = new URL(raw).searchParams.get('u') || ''; return /^(tasks(\.html)?)?#\/[\w/-]*$/.test(u) || /^(tasks(\.html)?)?$/.test(u) ? u : null; } catch { return null; }
+}
+let pendingLink = linkTarget(process.argv);
+/** Opens that page of the app in the window (same page: only the part after # changes, without reloading). */
+function openLink(rel) {
+  if (!rel) return;
+  if (!win) { pendingLink = rel; return createWindow(); }
+  showWin();
+  const want = new URL(rel, APP_URL), cur = (() => { try { return new URL(win.webContents.getURL()); } catch { return null; } })();
+  const page = x => x.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/index';
+  if (cur && cur.origin === want.origin && page(cur) === page(want)) win.webContents.executeJavaScript(`location.hash = ${JSON.stringify(want.hash)}`).catch(() => win.loadURL(want.href));
+  else win.loadURL(want.href);
+}
+
 /* ───────── opciones (arrancar con Windows, ícono en la barra, tamaño de la ventana) ───────── */
 const cfgFile = () => path.join(app.getPath('userData'), 'settings.json');
 const DEFAULTS = { autoStart: true, tray: true, mini: true, bounds: null, maximized: false };
@@ -88,7 +108,7 @@ function createWindow() {
   win.on('session-end', () => { quitting = true; }); // Windows se apaga: salir sin preguntar
   win.on('show', () => handleAfk()); win.on('hide', () => handleAfk());
   win.on('closed', () => { win = null; if (mini && !mini.isDestroyed()) mini.destroy(); mini = null; });
-  win.loadURL(APP_URL);
+  win.loadURL(pendingLink ? new URL(pendingLink, APP_URL).href : APP_URL); pendingLink = null;
 }
 /* ───────── salir: si el reloj está corriendo, preguntar y pausarlo antes de cerrar ───────── */
 const withTimeout = (p, ms, v) => Promise.race([p, new Promise(r => setTimeout(() => r(v), ms))]);
@@ -403,7 +423,7 @@ function startUpdates() {
 }
 
 /* ───────── arranque ───────── */
-app.on('second-instance', showWin);
+app.on('second-instance', (e, argv) => { const l = linkTarget(argv); if (l) openLink(l); else showWin(); });
 app.whenReady().then(() => {
   loadCfg(); applyAutoStart();
   // Google no deja iniciar sesión desde "apps": la ventana se presenta como el Chrome que es por dentro

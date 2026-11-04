@@ -1,7 +1,7 @@
 {
   "name": "whiteboard-clock-desktop",
   "productName": "Whiteboard Clock",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Whiteboard Clock para Windows: la misma app web, en su propia ventana.",
   "main": "src/main.js",
   "author": "Whiteboard Games",
@@ -23,6 +23,14 @@
   "build": {
     "appId": "games.whiteboard.clock",
     "productName": "Whiteboard Clock",
+    "protocols": [
+      {
+        "name": "Whiteboard Clock",
+        "schemes": [
+          "whiteboardclock"
+        ]
+      }
+    ],
     "artifactName": "WhiteboardClock-Setup-${version}.${ext}",
     "directories": {
       "output": "dist",
