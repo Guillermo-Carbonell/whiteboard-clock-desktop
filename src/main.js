@@ -50,9 +50,19 @@ function openLink(rel) {
 const cfgFile = () => path.join(app.getPath('userData'), 'settings.json');
 const DEFAULTS = { autoStart: true, tray: true, mini: true, bounds: null, maximized: false };
 let cfg = { ...DEFAULTS };
-function loadCfg() { try { cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; } catch { cfg = { ...DEFAULTS }; } delete cfg.miniPos; }
+let cfgExisted = false;
+function loadCfg() { try { cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; cfgExisted = true; } catch { cfg = { ...DEFAULTS }; } delete cfg.miniPos; }
 function saveCfg() { try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 1)); } catch { /* */ } }
 function applyAutoStart() { if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart, path: process.execPath }); }
+/** Al abrir la app: manda lo que diga Windows (si lo apagaste en el Administrador de tareas o en Configuración → Aplicaciones → Inicio, queda apagado).
+ *  Solo la primera vez que se instala se anota sola para arrancar con Windows; después solo cambia si lo tocás en Configuración de la app. */
+function syncAutoStart() {
+  if (!app.isPackaged) return;
+  if (!cfgExisted && !cfg.autoStartSet) { cfg.autoStartSet = true; saveCfg(); applyAutoStart(); return; }
+  let on = !!cfg.autoStart;
+  try { const st = app.getLoginItemSettings({ path: process.execPath }); on = !!(st.executableWillLaunchAtLogin ?? st.openAtLogin); } catch { /* */ }
+  if (on !== !!cfg.autoStart || !cfg.autoStartSet) { cfg.autoStart = on; cfg.autoStartSet = true; saveCfg(); }
+}
 
 /* ───────── la ventana ───────── */
 let win = null, tray = null, quitting = false, pendingUpdate = '';
@@ -425,7 +435,7 @@ function startUpdates() {
 /* ───────── arranque ───────── */
 app.on('second-instance', (e, argv) => { const l = linkTarget(argv); if (l) openLink(l); else showWin(); });
 app.whenReady().then(() => {
-  loadCfg(); applyAutoStart();
+  loadCfg(); syncAutoStart();
   // Google no deja iniciar sesión desde "apps": la ventana se presenta como el Chrome que es por dentro
   const ua = session.defaultSession.getUserAgent().replace(/\s?Electron\/[\d.]+/, '').replace(/\s?whiteboard-clock-desktop\/[\d.]+/i, '').replace(/\s?Whiteboard Clock\/[\d.]+/i, '');
   session.defaultSession.setUserAgent(ua); app.userAgentFallback = ua;
