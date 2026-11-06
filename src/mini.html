@@ -33,7 +33,17 @@
   let s = { state: 'off', label: '', dur: 0, at: 0 };
   const two = n => String(n).padStart(2, '0');
   const fmt = ms => { const x = Math.max(0, Math.floor(ms / 1000)); return two(Math.floor(x / 3600)) + ':' + two(Math.floor(x / 60) % 60) + ':' + two(x % 60); };
-  function tick() { $('t').textContent = fmt(s.state === 'run' ? s.dur + (Date.now() - s.at) : s.dur); }
+  const hh = ms => (Math.round(ms / 360000) / 10).toString().replace('.', ',') + ' h';
+  // pasando el mouse por el tiempo: cómo vas en la semana ("39,7 h de 40 h (99%)"), sumando lo que corre
+  function weekTip() {
+    if (!s.wk) return '';
+    const tot = s.wk.tot + (s.state === 'run' ? Date.now() - s.at : 0), tgt = s.wk.tgt;
+    return 'Esta semana\n' + hh(tot) + (tgt ? ' de ' + hh(tgt) + ' (' + Math.round(tot / tgt * 100) + '%)' : '');
+  }
+  function tick() {
+    $('t').textContent = fmt(s.state === 'run' ? s.dur + (Date.now() - s.at) : s.dur);
+    const w = weekTip(); if ($('t').title !== w) $('t').title = w;
+  }
   function paint() {
     const ask = s.afk && s.afk.kind === 'ask'; // "¿Seguís ahí?" pendiente: amarillo
     $('p').classList.toggle('pause', s.state === 'pause' || ask);

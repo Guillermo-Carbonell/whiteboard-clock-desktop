@@ -177,13 +177,14 @@ ipcMain.handle('wb:show', () => showWin());
    La página avisa cada vez que el reloj arranca, se pausa o se detiene (y cada 30 s, con lo que lleva). */
 const img = f => nativeImage.createFromPath(path.join(__dirname, '..', 'build', f));
 const ICONS = { run: { ov: img('ov-run.png'), tray: img('tray-run.png') }, pause: { ov: img('ov-pause.png'), tray: img('tray-pause.png') }, off: { ov: null, tray: img('tray.png') } };
-let clock = { state: 'off', label: '', dur: 0, at: 0, afk: null };
+let clock = { state: 'off', label: '', dur: 0, at: 0, afk: null, wk: null };
 ipcMain.on('wb:clock', (e, v) => {
   if (!win || e.sender !== win.webContents || !v) return;
   const state = ['run', 'pause'].includes(v.state) ? v.state : 'off';
   const a = v.afk && typeof v.afk === 'object' && ['ask', 'paused'].includes(v.afk.kind) ? v.afk : null;
   const afk = a ? { kind: a.kind, key: String(a.key || '').slice(0, 200), since: Number(a.since) || 0, deadline: Number(a.deadline) || 0, pausedAt: Number(a.pausedAt) || 0, why: String(a.why || 'idle').slice(0, 20) } : null;
-  clock = { state, label: String(v.label || '').slice(0, 120), dur: Number(v.dur) || 0, at: Number(v.at) || Date.now(), afk };
+  const w = v.wk && typeof v.wk === 'object' ? { tot: Math.max(0, Number(v.wk.tot) || 0), tgt: Math.max(0, Number(v.wk.tgt) || 0) } : null; // cómo va la semana (tooltip del mini reloj)
+  clock = { state, label: String(v.label || '').slice(0, 120), dur: Number(v.dur) || 0, at: Number(v.at) || Date.now(), afk, wk: w };
   paintClock();
 });
 function paintClock() {
