@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('mini', {
   cmd: c => ipcRenderer.send('mini:cmd', c),
   open: () => ipcRenderer.send('mini:open'),
   ready: () => ipcRenderer.send('mini:ready'),
+  tip: (t, x) => ipcRenderer.send('mini:tip', t, x),
 });

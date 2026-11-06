@@ -117,7 +117,7 @@ function createWindow() {
   win.webContents.on('will-prevent-unload', e => e.preventDefault());
   win.on('session-end', () => { quitting = true; }); // Windows se apaga: salir sin preguntar
   win.on('show', () => handleAfk()); win.on('hide', () => handleAfk());
-  win.on('closed', () => { win = null; if (mini && !mini.isDestroyed()) mini.destroy(); mini = null; });
+  win.on('closed', () => { win = null; if (mini && !mini.isDestroyed()) mini.destroy(); mini = null; if (tip && !tip.isDestroyed()) tip.destroy(); tip = null; });
   win.loadURL(pendingLink ? new URL(pendingLink, APP_URL).href : APP_URL); pendingLink = null;
 }
 /* ───────── salir: si el reloj está corriendo, preguntar y pausarlo antes de cerrar ───────── */
@@ -323,7 +323,7 @@ function makeMini(r) {
 function refreshMini() {
   if (!app.isReady()) return;
   const r = (cfg.mini && clock.state !== 'off' && !fsBusy && win && !quitting) ? miniRect() : null;
-  if (!r) { if (mini && !mini.isDestroyed() && mini.isVisible()) mini.hide(); return; }
+  if (!r) { hideTip(); if (mini && !mini.isDestroyed() && mini.isVisible()) mini.hide(); return; }
   if (!mini || mini.isDestroyed()) makeMini(r);
   // con la pantalla al 125 % o 150 % Windows redondea: solo se mueve si de verdad cambió (si no, parpadea)
   const b = mini.getBounds(); if (Math.abs(b.x - r.x) > 2 || Math.abs(b.y - r.y) > 2 || Math.abs(b.width - r.width) > 2 || Math.abs(b.height - r.height) > 2) mini.setBounds(r);
@@ -337,6 +337,36 @@ ipcMain.on('mini:ready', e => {
 });
 ipcMain.on('mini:cmd', (e, c) => { if (!fromUs(e) || !win) return; if (['pause', 'resume', 'stop', 'afk-ok', 'afk-pause', 'afk-resume', 'afk-keep'].includes(c)) win.webContents.send('wb:clock-cmd', c); });
 ipcMain.on('mini:open', e => { if (fromUs(e)) showWin(); });
+/* El tooltip del mini reloj ("Esta semana · 39,7 h de 40 h (99%)"): una ventanita encima de la barra, sin foco, que aparece mientras el mouse está sobre el tiempo. */
+let tip = null, tipReady = false, tipWant = null;
+const TIP_W = 240, TIP_H = 64;
+function hideTip() { tipWant = null; if (tip && !tip.isDestroyed() && tip.isVisible()) tip.hide(); }
+function showTip() {
+  if (!tipWant || !mini || mini.isDestroyed() || !mini.isVisible()) return hideTip();
+  if (!tip || tip.isDestroyed()) {
+    tip = new BrowserWindow({ width: TIP_W, height: TIP_H, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
+      skipTaskbar: true, focusable: false, alwaysOnTop: true, show: false, hasShadow: false, backgroundColor: '#00000000',
+      webPreferences: { preload: path.join(__dirname, 'tip-preload.js'), contextIsolation: true, sandbox: true } });
+    tip.setAlwaysOnTop(true, 'screen-saver'); tip.setIgnoreMouseEvents(true);
+    tipReady = false; tip.loadFile(path.join(__dirname, 'tip.html'));
+    tip.on('closed', () => { tip = null; tipReady = false; });
+    return;
+  }
+  if (!tipReady) return;
+  const m = mini.getBounds(), d = screen.getDisplayMatching(m).bounds, down = m.y < d.y + d.height / 2; // barra arriba: el tooltip va abajo
+  const x = Math.round(Math.min(d.x + d.width - TIP_W, Math.max(d.x, m.x + tipWant.x - TIP_W / 2)));
+  const y = down ? m.y + m.height + 4 : m.y - TIP_H - 4;
+  tip.setBounds({ x, y, width: TIP_W, height: TIP_H });
+  tip.webContents.send('tip:text', tipWant.text, down);
+  if (!tip.isVisible()) tip.showInactive(); tip.moveTop();
+}
+ipcMain.on('tip:ready', e => { if (tip && !tip.isDestroyed() && e.sender === tip.webContents) { tipReady = true; showTip(); } });
+ipcMain.on('mini:tip', (e, t, x) => {
+  if (!mini || mini.isDestroyed() || e.sender !== mini.webContents) return;
+  const text = String(t || '').slice(0, 200);
+  if (!text) return hideTip();
+  tipWant = { text, x: Math.max(0, Math.min(MINI_W, Number(x) || 0)) }; showTip();
+});
 
 /* ───────── "¿Seguís ahí?" ─────────
    Con la ventana abierta: la trae adelante y el cartel sale en la página, como en la web.

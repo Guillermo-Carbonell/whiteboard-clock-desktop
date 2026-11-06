@@ -42,8 +42,12 @@
   }
   function tick() {
     $('t').textContent = fmt(s.state === 'run' ? s.dur + (Date.now() - s.at) : s.dur);
-    const w = weekTip(); if ($('t').title !== w) $('t').title = w;
+    if (over) { const w = weekTip(); if (w !== shown) { shown = w; const r = $('t').getBoundingClientRect(); window.mini.tip?.(w, r.left + r.width / 2); } }
   }
+  // Windows no muestra los tooltips comunes en una ventana que no tiene el foco (y el mini reloj nunca lo tiene): lo dibuja la app aparte
+  let over = false, shown = '';
+  $('t').addEventListener('mouseenter', () => { over = true; shown = ''; tick(); });
+  $('t').addEventListener('mouseleave', () => { over = false; shown = ''; window.mini.tip?.('', 0); });
   function paint() {
     const ask = s.afk && s.afk.kind === 'ask'; // "¿Seguís ahí?" pendiente: amarillo
     $('p').classList.toggle('pause', s.state === 'pause' || ask);
@@ -58,6 +62,7 @@
   $('bs').onclick = () => window.mini.cmd('stop');
   $('lb').onclick = () => window.mini.open();
   setInterval(tick, 500);
+  window.addEventListener('blur', () => { if (over) { over = false; window.mini.tip?.('', 0); } });
   window.mini.ready();
 </script>
 </body></html>

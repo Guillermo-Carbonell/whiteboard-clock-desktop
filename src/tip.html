@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Tooltip</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; pointer-events: none; }
+  body { display: flex; justify-content: center; align-items: flex-end; box-sizing: border-box; padding: 6px; }
+  body.down { align-items: flex-start; }
+  .b { background: #e9edf0; color: #1b1f24; border-radius: 8px; padding: 7px 12px; font: 13px/1.45 'Segoe UI', system-ui, sans-serif; white-space: pre; box-shadow: 0 2px 8px #0005; }
+  .b span { color: #5b6570; }
+</style></head>
+<body><div class="b" id="b"></div>
+<script>
+  const b = document.getElementById('b');
+  window.tip.onText((t, down) => {
+    document.body.classList.toggle('down', !!down);
+    const [first, ...rest] = String(t || '').split('\n');
+    b.textContent = first; if (rest.length) { const s = document.createElement('span'); s.textContent = '\n' + rest.join('\n'); b.appendChild(s); }
+  });
+  window.tip.ready();
+</script>
+</body></html>
