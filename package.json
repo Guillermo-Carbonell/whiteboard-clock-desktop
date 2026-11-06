@@ -1,7 +1,7 @@
 {
   "name": "whiteboard-clock-desktop",
   "productName": "Whiteboard Clock",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Whiteboard Clock para Windows: la misma app web, en su propia ventana.",
   "main": "src/main.js",
   "author": "Whiteboard Games",

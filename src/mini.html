@@ -23,10 +23,10 @@
 <div class="pill" id="p">
   <span class="dot"></span>
   <span class="t" id="t">00:00:00</span>
-  <span class="lb" id="lb" title="Abrir Whiteboard Clock"></span>
-  <button id="bp" aria-label="Pausar" title="Pausar"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1" width="2.4" height="8" rx=".6" fill="#c9ced4"/><rect x="6.1" y="1" width="2.4" height="8" rx=".6" fill="#c9ced4"/></svg></button>
-  <button id="br" class="hide" aria-label="Seguir" title="Seguir"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 1 9 5 2 9z" fill="#2fbf5b"/></svg></button>
-  <button id="bs" aria-label="Detener" title="Detener"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1.2" fill="#ef5350"/></svg></button>
+  <span class="lb" id="lb" data-tip="Abrir Whiteboard Clock"></span>
+  <button id="bp" aria-label="Pausar" data-tip="Pausar"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1" width="2.4" height="8" rx=".6" fill="#c9ced4"/><rect x="6.1" y="1" width="2.4" height="8" rx=".6" fill="#c9ced4"/></svg></button>
+  <button id="br" class="hide" aria-label="Seguir" data-tip="Seguir"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 1 9 5 2 9z" fill="#2fbf5b"/></svg></button>
+  <button id="bs" aria-label="Detener" data-tip="Detener"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1.2" fill="#ef5350"/></svg></button>
 </div>
 <script>
   const $ = id => document.getElementById(id);
@@ -42,12 +42,14 @@
   }
   function tick() {
     $('t').textContent = fmt(s.state === 'run' ? s.dur + (Date.now() - s.at) : s.dur);
-    if (over) { const w = weekTip(); if (w !== shown) { shown = w; const r = $('t').getBoundingClientRect(); window.mini.tip?.(w, r.left + r.width / 2); } }
+    if (over) { const w = over.id === 't' ? weekTip() : over.dataset.tip; if (w !== shown) { shown = w; const r = over.getBoundingClientRect(); window.mini.tip?.(w, r.left + r.width / 2); } }
   }
-  // Windows no muestra los tooltips comunes en una ventana que no tiene el foco (y el mini reloj nunca lo tiene): lo dibuja la app aparte
-  let over = false, shown = '';
-  $('t').addEventListener('mouseenter', () => { over = true; shown = ''; tick(); });
-  $('t').addEventListener('mouseleave', () => { over = false; shown = ''; window.mini.tip?.('', 0); });
+  // Windows dibuja los tooltips comunes atrás de la barra y con su estilo: los dibuja la app aparte, igual que en la página
+  let over = null, shown = '';
+  for (const el of [$('t'), ...document.querySelectorAll('[data-tip]')]) {
+    el.addEventListener('mouseenter', () => { over = el; shown = ''; tick(); });
+    el.addEventListener('mouseleave', () => { if (over === el) { over = null; shown = ''; window.mini.tip?.('', 0); } });
+  }
   function paint() {
     const ask = s.afk && s.afk.kind === 'ask'; // "¿Seguís ahí?" pendiente: amarillo
     $('p').classList.toggle('pause', s.state === 'pause' || ask);
@@ -57,12 +59,13 @@
     tick();
   }
   window.mini.onState(v => { s = v; paint(); });
-  $('bp').onclick = () => window.mini.cmd('pause');
-  $('br').onclick = () => window.mini.cmd('resume');
-  $('bs').onclick = () => window.mini.cmd('stop');
-  $('lb').onclick = () => window.mini.open();
+  const off = () => { over = null; shown = ''; window.mini.tip?.('', 0); };
+  $('bp').onclick = () => { off(); window.mini.cmd('pause'); };
+  $('br').onclick = () => { off(); window.mini.cmd('resume'); };
+  $('bs').onclick = () => { off(); window.mini.cmd('stop'); };
+  $('lb').onclick = () => { off(); window.mini.open(); };
   setInterval(tick, 500);
-  window.addEventListener('blur', () => { if (over) { over = false; window.mini.tip?.('', 0); } });
+  window.addEventListener('blur', () => { if (over) { over = null; window.mini.tip?.('', 0); } });
   window.mini.ready();
 </script>
 </body></html>

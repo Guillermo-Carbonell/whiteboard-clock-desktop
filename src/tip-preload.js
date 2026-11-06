@@ -2,5 +2,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('tip', {
   onText: cb => ipcRenderer.on('tip:text', (e, t, down) => cb(t, down)),
+  onHide: cb => ipcRenderer.on('tip:hide', () => cb()),
   ready: () => ipcRenderer.send('tip:ready'),
 });

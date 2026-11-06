@@ -339,8 +339,8 @@ ipcMain.on('mini:cmd', (e, c) => { if (!fromUs(e) || !win) return; if (['pause',
 ipcMain.on('mini:open', e => { if (fromUs(e)) showWin(); });
 /* El tooltip del mini reloj ("Esta semana · 39,7 h de 40 h (99%)"): una ventanita encima de la barra, sin foco, que aparece mientras el mouse está sobre el tiempo. */
 let tip = null, tipReady = false, tipWant = null;
-const TIP_W = 240, TIP_H = 64;
-function hideTip() { tipWant = null; if (tip && !tip.isDestroyed() && tip.isVisible()) tip.hide(); }
+const TIP_W = 260, TIP_H = 76;
+function hideTip() { tipWant = null; if (tip && !tip.isDestroyed() && tip.isVisible()) { tip.webContents.send('tip:hide'); tip.hide(); } }
 function showTip() {
   if (!tipWant || !mini || mini.isDestroyed() || !mini.isVisible()) return hideTip();
   if (!tip || tip.isDestroyed()) {
